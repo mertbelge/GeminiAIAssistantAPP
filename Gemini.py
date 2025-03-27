@@ -7,7 +7,9 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
 from kivy.uix.label import Label
-from kivy.clock import Clock
+from kivy.uix.image import Image
+from kivy.uix.relativelayout import RelativeLayout
+from datetime import datetime
 
 def db_connection():
       
@@ -112,6 +114,7 @@ class AI_App(App):
         self.note_not_exist = "Tarafınıza ait not bulunmamaktadır!"
         self.set_passive_complete = 'Notlarınız tamamlandıya çekilmiştir!'
         self.set_passive_fail = 'Notlarınız tamamlandıya çekildiği sıra hata meydana!'
+        self.now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         sys_prompt = system_prompt()
 
         self.history = [{'parts': [{'text':sys_prompt}], 'role': 'user'}] + get_chat_history()
@@ -122,34 +125,68 @@ class AI_App(App):
         self.connection = db_connection()
         self.cursor = self.connection.cursor()
 
-        layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
-        self.label = Label(text="AI Asistanına mesaj gönder!", font_size=18, size_hint=(1, 0.1))
-        self.text_input = TextInput(size_hint=(1, 0.2), multiline=False)
-        self.text_input.bind(on_text_validate=self.on_enter)
-        self.send_button = Button(text="Gönder", size_hint=(1, 0.2))
-        self.send_button.bind(on_press=self.on_enter)
+        main_layout = BoxLayout(orientation='vertical')
+
+        top_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=50, padding=[0, 0, 10, 15])
+        self.label = Label(text="My Pocket Assistant", font_size=18, size_hint=(1, 0.1))
+
+        exit_layout = RelativeLayout(size_hint=(None, None), size=(25, 25))
+
+        self.exit_button = Button(size_hint=(1, 1), background_normal="", background_color=(1, 1, 1))
+        self.exit_button.bind(on_press=self.on_exit)
+
+        exit_icon = Image(source="img/x-icon.png", size_hint=(None, None), size=(15, 15),
+                          pos_hint={"center_x": 0.5, "center_y": 0.5})
+        
+        exit_layout.add_widget(self.exit_button)
+        exit_layout.add_widget(exit_icon)
+
+        top_layout.add_widget(self.label)
+        top_layout.add_widget(exit_layout)
+
+        middle_layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
         self.response_label = Label(text="", size_hint=(1, 0.5))
+    
+        middle_layout.add_widget(self.response_label)
+        
+        bottom_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=50)
+        self.text_input = TextInput(size_hint_x=0.9, multiline=False)
+        self.text_input.bind(on_text_validate=self.on_enter)
 
-        layout.add_widget(self.label)
-        layout.add_widget(self.text_input)
-        layout.add_widget(self.send_button)
-        layout.add_widget(self.response_label)
-        return layout
+        button_layout = RelativeLayout(size_hint=(None, None), size=(100, 50))
+
+        self.send_button = Button(size_hint=(1, 1), background_normal="", background_color=(1, 1, 1))
+        self.send_button.bind(on_press=self.on_enter)
+
+        send_icon = Image(source="img/send-icon.png", size_hint=(None, None), size=(30, 30),
+                          pos_hint={"center_x": 0.5, "center_y": 0.5})
+
+        button_layout.add_widget(self.send_button)
+        button_layout.add_widget(send_icon)
+        
+        bottom_layout.add_widget(self.text_input)
+        bottom_layout.add_widget(button_layout)
+
+        main_layout.add_widget(top_layout) 
+        main_layout.add_widget(middle_layout)
+        main_layout.add_widget(bottom_layout) 
+        return main_layout
     
-    def on_start(self):
-        self.load_kv(filename="")
-    
+    def on_exit(self, instance):
+
+        self.cursor.close()
+        self.connection.close()
+        App.get_running_app().stop()
+        return  
+      
     def on_enter(self, instance):
-            
-        prompt =  self.text_input.text.strip()
 
-        if prompt.lower() == "exit":
-                
-            self.cursor.close()
-            self.connection.close()
-            self.chat_session.close()
-            App.get_running_app().stop()
-            return
+        self.cursor.callproc('SP_STAREX_GetCurrentChatHistory', (self.now,))
+        self.connection.commit()
+        result = self.cursor.fetchall()
+        
+        prompt =  self.text_input.text.strip()
+        self.text_input.text = ""
                 
         response = self.chat_session.send_message(prompt)
         response.resolve()
@@ -189,11 +226,11 @@ class AI_App(App):
 
         else:
 
+            message = response.text
             self.cursor.callproc("SP_STAREX_AIChat", ('user', prompt))
             self.connection.commit()
-            self.cursor.callproc("SP_STAREX_AIChat", ('assistant', response.text))
+            self.cursor.callproc("SP_STAREX_AIChat", ('assistant', message))
             self.connection.commit()  
-            message = response.text
             
         self.response_label.text = message
 
