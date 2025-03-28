@@ -144,16 +144,28 @@ class AI_App(App):
         top_layout.add_widget(self.label)
         top_layout.add_widget(exit_layout)
 
-        middle_layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
-        self.response_label = Label(text="", size_hint=(1, 0.5))
-    
-        middle_layout.add_widget(self.response_label)
-        
-        bottom_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=50)
-        self.text_input = TextInput(size_hint_x=0.9, multiline=False)
-        self.text_input.bind(on_text_validate=self.on_enter)
+        space_layout_1 = RelativeLayout(size_hint=(None, None), size=(10, 50))
+        space_layout_2 = RelativeLayout(size_hint=(None, None), size=(5, 50))
+        space_layout_3 = RelativeLayout(size_hint=(None, None), size=(5, 50))
+        space_layout_4 = RelativeLayout(size_hint=(None, None), size=(5, 50))
 
-        button_layout = RelativeLayout(size_hint=(None, None), size=(100, 50))
+        self.middle_layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+        
+        bottom_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=100)
+        self.text_input = TextInput(size_hint_x=0.9, multiline=True)
+
+        listen_layout = RelativeLayout(size_hint=(None, None), size=(50, 50))
+
+        self.listen_button = Button(size_hint=(1, 1), background_normal="", background_color=(1, 1, 1))
+        self.listen_button.bind(on_press=self.on_record)
+
+        listen_icon = Image(source="img/mic-icon.png", size_hint=(None, None), size=(30, 30),
+                          pos_hint={"center_x": 0.5, "center_y": 0.5})
+        
+        listen_layout.add_widget(self.listen_button)
+        listen_layout.add_widget(listen_icon)
+
+        button_layout = RelativeLayout(size_hint=(None, None), size=(50, 50))
 
         self.send_button = Button(size_hint=(1, 1), background_normal="", background_color=(1, 1, 1))
         self.send_button.bind(on_press=self.on_enter)
@@ -164,75 +176,114 @@ class AI_App(App):
         button_layout.add_widget(self.send_button)
         button_layout.add_widget(send_icon)
         
+        bottom_layout.add_widget(space_layout_1)
         bottom_layout.add_widget(self.text_input)
+        bottom_layout.add_widget(space_layout_2)
+        bottom_layout.add_widget(listen_layout)
+        bottom_layout.add_widget(space_layout_3)
         bottom_layout.add_widget(button_layout)
+        bottom_layout.add_widget(space_layout_4)
 
         main_layout.add_widget(top_layout) 
-        main_layout.add_widget(middle_layout)
+        main_layout.add_widget(self.middle_layout)
         main_layout.add_widget(bottom_layout) 
         return main_layout
-    
-    def on_exit(self, instance):
+       
+    def on_pause(self):
 
         self.cursor.close()
         self.connection.close()
+        return 
+
+    def on_resume(self):
+
+        self.connection = db_connection()
+        self.cursor = self.connection.cursor()
+        return
+    
+    def on_exit(self, instance):
+
         App.get_running_app().stop()
-        return  
+        return 
+
+    def on_record(self, instance):
+
+        self.text_input.text = ""
       
     def on_enter(self, instance):
-
-        self.cursor.callproc('SP_STAREX_GetCurrentChatHistory', (self.now,))
-        self.connection.commit()
-        result = self.cursor.fetchall()
         
         prompt =  self.text_input.text.strip()
         self.text_input.text = ""
+        self.middle_layout.clear_widgets()
+
+        first_propmt = prompt
+
+        if prompt != '':
                 
-        response = self.chat_session.send_message(prompt)
-        response.resolve()
+            response = self.chat_session.send_message(prompt)
+            response.resolve()
 
-        if response.text == '1\n':
+            if response.text == '1\n':
 
-            self.cursor.callproc("SP_STAREX_AIAddNote", (prompt,))
+                self.cursor.callproc("SP_STAREX_AIAddNote", (prompt,))
+                self.connection.commit()
+                message = self.note_add
+
+            elif response.text == '2\n':
+
+                self.cursor.callproc("SP_STAREX_NoteGetList")
+                result = self.cursor.fetchall()
+
+                message = "\n".join([note[0] for note in result]) if result else self.note_not_exist
+
+            elif response.text == '3\n':
+                
+                prompt = prompt.lower()
+                prompt = prompt.split(' ',4)[-1]
+                set_passive_id = prompt.split(" ve ")
+
+                try:
+
+                    for id_value in set_passive_id:
+
+                        self.cursor.callproc("SP_STAREX_AINoteUpdate", (id_value,))
+                        self.connection.commit()
+
+                    message = self.set_passive_complete
+
+                except:
+
+                    message = self.set_passive_fail
+
+
+            else:
+
+                message = response.text
+                self.cursor.callproc("SP_STAREX_AIChat", ('user', prompt))
+                self.connection.commit()
+                self.cursor.callproc("SP_STAREX_AIChat", ('assistant', message))
+                self.connection.commit()  
+
+            self.cursor.callproc("SP_STAREX_AILogInsert", ('user', first_propmt))
             self.connection.commit()
-            message = self.note_add
+            self.cursor.callproc("SP_STAREX_AILogInsert", ('assistant', message))
+            self.connection.commit() 
 
-        elif response.text == '2\n':
-
-            self.cursor.callproc("SP_STAREX_NoteGetList")
+            self.cursor.callproc('SP_STAREX_GetCurrentChatHistory', (self.now,))
+            self.connection.commit()
             result = self.cursor.fetchall()
 
-            message = "\n".join([note[0] for note in result]) if result else self.note_not_exist
+            for row in result:
 
-        elif response.text == '3\n':
+                role, description = row
             
-            prompt = prompt.lower()
-            prompt = prompt.split(' ',4)[-1]
-            set_passive_id = prompt.split(" ve ")
+                if role == 'user':
+        
+                    self.middle_layout.add_widget(Label(text=description, size_hint=(1, 0.5)))
 
-            try:
-
-                for id_value in set_passive_id:
-
-                    self.cursor.callproc("SP_STAREX_AINoteUpdate", (id_value,))
-                    self.connection.commit()
-
-                message = self.set_passive_complete
-
-            except:
-
-                message = self.set_passive_fail
-
-
-        else:
-
-            message = response.text
-            self.cursor.callproc("SP_STAREX_AIChat", ('user', prompt))
-            self.connection.commit()
-            self.cursor.callproc("SP_STAREX_AIChat", ('assistant', message))
-            self.connection.commit()  
+                elif role == 'assistant':
             
-        self.response_label.text = message
+                    self.middle_layout.add_widget(Label(text=description, size_hint=(1, 0.5)))
 
 if __name__ == "__main__":
     AI_App().run()
